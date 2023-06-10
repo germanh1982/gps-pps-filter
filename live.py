@@ -1,93 +1,71 @@
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-import paho.mqtt.client as mqttclient
-import queue
 from argparse import ArgumentParser
-from filterpy.common import Q_discrete_white_noise
-from filterpy.kalman import KalmanFilter
 import numpy as np
-import scipy
+from mqttclient import MQTTClient
+from filters import Bessel
 
-"""
-class Smoother:
-    def __init__(self):
-        self._kalman = KalmanFilter (dim_x=2, dim_z=1)
-        self._kalman.x = np.array([1.65e-8, 1e-12])    # initial values: position, velocity
-        self._kalman.F = np.array([[1.,1.], [0.,1.]]) # state transition matrix
-        self._kalman.H = np.array([[1.,0.]]) # measurement function
-        self._kalman.P = np.array([[1000., 0.], [0., 1000.]]) # covariance matrix
-        self._kalman.R = np.array([[10000.]]) # measurement noise
-        self._kalman.Q = Q_discrete_white_noise(dim=2, dt=0.1, var=0.013) # process noise
+class PhaseFreqConv:
+    def __init__(self, sampling_period):
+        self._prev = None
+        self._sp = sampling_period
 
-    def feed(self, value):
-        self._kalman.predict()
-        self._kalman.update(value)
-        return self._kalman.x
-"""
+    def feed(self, current):
+        prev = self._prev
+        self._prev = current
+        if prev is None:
+            return None
+        else:
+            return current - prev - self._sp
 
-class Filter:
-    def __init__(self, order):
-        self._zi = np.zeros(order, dtype=float)
+class CircularBuffer:
+    def __init__(self, rows, cols, defval=np.nan):
+        self._buf = np.full([rows, cols], defval, dtype=float)
 
-    def feed(self, value):
-        out, self._zi = scipy.signal.lfilter(*self._coeff, value, zi=self._zi)
-        print(self._zi)
-        return out
+    def append(self, *values):
+        self._buf[0] = np.array(values)
+        self._buf = np.roll(self._buf, -1, axis=0)
 
-class Butter(Filter):
-    def __init__(self, order, cutoff):
-        self._coeff = scipy.signal.butter(order, cutoff)
-        super().__init__(order)
+    def get(self):
+        return self._buf
 
-class Bessel(Filter):
-    def __init__(self, order, cutoff):
-        self._coeff = scipy.signal.bessel(order, cutoff)
-        super().__init__(order)
+def main():
+    phase_diff = PhaseFreqConv(args.period)
+    filt1 = Bessel(3, 0.02)
+    buf = CircularBuffer(args.bufsize, 2)
+    mqtt = MQTTClient(
+        host=args.host,
+        topics=['meas/chA']
+        )
 
-BUFSIZE = 500
+    # enable interactive mode
+    plt.ion()
 
-filt1 = Bessel(3, 0.02)
+    while True:
+        for phase in (float(strvalue) for topic, strvalue in mqtt.get() if topic == 'meas/chA'):
+            freq = phase_diff.feed(phase)
 
-q = queue.Queue()
+            if freq is not None:
+                # frequency lowpass filtering
+                out1 = np.array(filt1.feed(freq))
 
-def on_message(client, userdata, message):
-    q.put(message.payload)
+                # append sample to circular buffer
+                buf.append(freq, out1[0])
 
-def on_connect(client, userdata, flags, rc):
-    client.subscribe('meas/chA')
+                # plot results
+                plt.plot(buf.get(), label=['in', 'bessel 3rd'])
+                plt.grid()
+                plt.legend()
+                plt.draw()
+                plt.pause(0.1)
+                plt.clf()
 
-c = mqttclient.Client()
-c.connect('192.168.1.1')
-c.on_connect = on_connect
-c.on_message = on_message
-c.loop_start()
+            phase_prev = phase
 
-np.set_printoptions(precision=17)
-
-phase_prev = None
-
-buf = np.full([BUFSIZE, 2], np.nan, dtype=float)
-
-plt.ion()
-
-while True:
-    phase = float(q.get())
-
-    if phase_prev is None:
-        pass
-
-    else:
-        freq = float(phase - phase_prev - 1)
-        out1 = np.array(filt1.feed(np.array([freq])))
-
-        buf[0] = np.array([freq, out1[0]])
-        buf = np.roll(buf, -1, axis=0)
-
-        plt.plot(buf, label=['in', 'bessel 3rd'])
-        plt.grid()
-        plt.legend()
-        plt.draw()
-        plt.pause(0.1)
-        plt.clf()
-
-    phase_prev = phase
+if __name__ == '__main__':
+    p = ArgumentParser()
+    p.add_argument('--bufsize', type=int, default=500, help='display buffer length')
+    p.add_argument('--period', type=int, default=1, help='sample period')
+    p.add_argument('host')
+    args = p.parse_args()
+    main()
