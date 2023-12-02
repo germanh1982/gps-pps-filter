@@ -3,7 +3,7 @@ import paho.mqtt.client as mqttclient
 
 class MQTTClient:
     def on_message(self, client, userdata, message):
-        self._incoming.put(message.payload)
+        self._incoming.put(message)
 
     def on_connect(self, client, userdata, flags, rc):
         for topic in self._topics:
@@ -14,7 +14,7 @@ class MQTTClient:
         self._incoming = Queue()
 
         self._conn = mqttclient.Client()
-        self._conn.connect('192.168.1.1')
+        self._conn.connect(host)
         self._conn.on_connect = self.on_connect
         self._conn.on_message = self.on_message
         self._conn.loop_start()
