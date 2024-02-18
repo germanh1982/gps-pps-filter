@@ -71,11 +71,11 @@ def main():
 
                 freq_corr = phase_diff_corr.feed(phase + qerr[0])
 
-                qerr[0] = None
-
                 if freq_corr is not None:
                     filt_freq, filt_drift = filt.feed(freq_corr)
                     log.debug(f"freq={freq_corr} qerr={qerr[0]} filt_freq={filt_freq}")
+
+                qerr[0] = None
 
                 if freq is not None and filt_freq is not None:
                     # append sample to circular buffer
