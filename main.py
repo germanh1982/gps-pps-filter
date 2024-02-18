@@ -67,7 +67,8 @@ def main():
                 freq = phase_diff.feed(phase)
 
                 if qerr[0] is None:
-                    raise Exception(f"No quantization error value available.")
+                    log.info(f"Last state: --startx={filt.state[0]} --startv={filt.state[1]}")
+                    raise RuntimeError(f"No quantization error value available.")
 
                 freq_corr = phase_diff_corr.feed(phase + qerr[0])
 
